@@ -11,7 +11,44 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Build with KernelSU Action
-      uses: tiann/actions-kernelsu-module-builder@v1
+    - name: Setup build environment
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential \
+          clang llvm lld \
+          libelf-dev \
+          git wget unzip \
+          python3 python3-pip \
+          bc flex bison
+        
+    - name: Clone KernelSU builder
+      run: |
+        git clone https://github.com/tiann/kernelsu_builder.git
+        cd kernelsu_builder
+        pip3 install -r requirements.txt 2>/dev/null || true
+        
+    - name: Create module.json
+      run: |
+        cat > module.json << 'EOF'
+        {
+          "id": "hma-plus-plus",
+          "name": "HMA++",
+          "version": "1.0.0",
+          "versionCode": 100,
+          "author": "maka945",
+          "description": "Hide My Applist",
+          "minKernelSU": "v0.7.0"
+        }
+        EOF
+        
+    - name: Build module
+      run: |
+        cd kernelsu_builder
+        python3 builder.py --module ../ --target aarch64
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
       with:
-        target: aarch64
+        name: HMA-plus-plus
+        path: kernelsu_builder/out/*.kpm
