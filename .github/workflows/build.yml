@@ -1,4 +1,4 @@
-name: Build HMA++ (Fixed)
+name: Build HMA++ for KernelSU
 
 on:
   workflow_dispatch:
@@ -7,11 +7,10 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04  # Use 22.04 for stability
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
-        arch: [aarch64]
-        # Start with just aarch64 for your Xiaomi 12T
+        arch: [aarch64]  # Your Xiaomi 12T uses arm64
     
     steps:
     - uses: actions/checkout@v4
@@ -21,29 +20,25 @@ jobs:
         sudo apt update
         sudo apt install -y \
           build-essential \
-          clang-14 llvm-14 lld-14 \
+          clang llvm lld \
           libelf-dev \
           git wget unzip \
           python3 python3-pip \
-          bc flex bison
+          bc flex bison \
+          rsync
         
-    - name: Download KernelSU
+    - name: Clone KernelSU
       run: |
-        # Download latest stable KernelSU
-        KSU_VERSION="v0.9.4"
-        wget -q "https://github.com/tiann/KernelSU/archive/refs/tags/${KSU_VERSION}.zip"
-        unzip -q "${KSU_VERSION}.zip"
-        mv "KernelSU-${KSU_VERSION#v}" kernelsu
-        
-        # Check if build.py exists
-        echo "Checking KernelSU structure..."
-        find kernelsu -name "build.py" -type f
+        git clone --depth=1 https://github.com/tiann/KernelSU.git kernelsu
+        echo "KernelSU structure:"
         ls -la kernelsu/
+        echo "Tools directory:"
+        ls -la kernelsu/tools/
         
     - name: Prepare module
       run: |
-        # Create module.json in the repository root
-        # KernelSU builder expects this structure
+        # KernelSU builder expects these files at root
+        # 1. module.json (metadata)
         cat > module.json << 'EOF'
         {
           "id": "hma-plus-plus",
@@ -51,14 +46,15 @@ jobs:
           "version": "1.0.0",
           "versionCode": 100,
           "author": "maka945",
-          "description": "Hide My Applist",
+          "description": "Hide My Applist Plus Plus",
           "minKernelSU": "v0.7.0"
         }
         EOF
         
-        # Create a simple Makefile if not exists
+        # 2. Makefile (build instructions)
         if [ ! -f "Makefile" ]; then
           cat > Makefile << 'EOF'
+          # Minimal Makefile for KernelSU module
           obj-m += hma_plus_plus.o
           hma_plus_plus-objs := HMA++.o
           
@@ -73,54 +69,47 @@ jobs:
           EOF
         fi
         
-    - name: Build for ${{ matrix.arch }}
-      run: |
-        echo "Current directory: $(pwd)"
-        echo "Listing contents:"
-        ls -la
-        
-        echo "KernelSU directory structure:"
-        find kernelsu -type f -name "*.py" | head -20
-        
-        # Try different possible locations for build.py
-        if [ -f "kernelsu/kernel/build.py" ]; then
-          echo "Found build.py in kernelsu/kernel/"
-          cd kernelsu/kernel
-          python3 build.py ../../ --target ${{ matrix.arch }}
-        elif [ -f "kernelsu/builder/build.py" ]; then
-          echo "Found build.py in kernelsu/builder/"
-          cd kernelsu/builder
-          python3 build.py ../../ --target ${{ matrix.arch }}
-        elif [ -f "kernelsu/scripts/build.py" ]; then
-          echo "Found build.py in kernelsu/scripts/"
-          cd kernelsu/scripts
-          python3 build.py ../../ --target ${{ matrix.arch }}
-        elif [ -f "kernelsu/build.py" ]; then
-          echo "Found build.py in kernelsu/"
-          cd kernelsu
-          python3 build.py ../ --target ${{ matrix.arch }}
-        else
-          echo "ERROR: Could not find build.py!"
-          echo "Searching all files..."
-          find kernelsu -name "*.py" -type f
+        # 3. Verify source file exists
+        if [ ! -f "HMA++.c" ]; then
+          echo "ERROR: HMA++.c not found!"
+          ls -la
           exit 1
         fi
         
-    - name: Upload artifact
+    - name: Build module with KernelSU builder
+      run: |
+        echo "=== Starting build process ==="
+        echo "Current directory: $(pwd)"
+        echo "Files in root:"
+        ls -la
+        
+        # The builder is in kernelsu/tools/
+        cd kernelsu/tools
+        
+        echo "Running KernelSU builder..."
+        python3 build.py ../../ --target ${{ matrix.arch }}
+        
+        # Check output
+        echo "Build output:"
+        find ../.. -name "*.kpm" -o -name "*.ko" 2>/dev/null || true
+        
+    - name: Upload KPM artifact
       uses: actions/upload-artifact@v4
       with:
         name: HMA-plus-plus-${{ matrix.arch }}
         path: |
-          kernelsu/**/*.kpm
-          out/*.kpm
+          ../*.kpm
           *.kpm
+          ../../*.kpm
         if-no-files-found: error
         
-    - name: Debug information
-      if: always()
+    - name: Debug on failure
+      if: failure()
       run: |
-        echo "=== Build Debug Info ==="
-        echo "Python version: $(python3 --version)"
-        echo "Clang version: $(clang-14 --version 2>/dev/null || echo 'Not found')"
-        echo "Current tree:"
-        find . -name "*.ko" -o -name "*.kpm" -o -name "build.py" 2>/dev/null
+        echo "=== DEBUG INFORMATION ==="
+        echo "Python: $(python3 --version)"
+        echo "Clang: $(clang --version 2>/dev/null || echo 'Not found')"
+        echo "Directory tree (simplified):"
+        find . -type f \( -name "*.py" -o -name "*.c" -o -name "Makefile" \) | head -30
+        echo "KernelSU tools content:"
+        ls -la kernelsu/tools/
