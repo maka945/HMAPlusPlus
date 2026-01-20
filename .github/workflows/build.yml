@@ -1,4 +1,4 @@
-name: Build HMA++ for KernelSU
+name: Build HMA++
 
 on:
   workflow_dispatch:
@@ -7,109 +7,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        arch: [aarch64]  # Your Xiaomi 12T uses arm64
-    
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     
-    - name: Setup environment
-      run: |
-        sudo apt update
-        sudo apt install -y \
-          build-essential \
-          clang llvm lld \
-          libelf-dev \
-          git wget unzip \
-          python3 python3-pip \
-          bc flex bison \
-          rsync
-        
-    - name: Clone KernelSU
-      run: |
-        git clone --depth=1 https://github.com/tiann/KernelSU.git kernelsu
-        echo "KernelSU structure:"
-        ls -la kernelsu/
-        echo "Tools directory:"
-        ls -la kernelsu/tools/
-        
-    - name: Prepare module
-      run: |
-        # KernelSU builder expects these files at root
-        # 1. module.json (metadata)
-        cat > module.json << 'EOF'
-        {
-          "id": "hma-plus-plus",
-          "name": "HMA++",
-          "version": "1.0.0",
-          "versionCode": 100,
-          "author": "maka945",
-          "description": "Hide My Applist Plus Plus",
-          "minKernelSU": "v0.7.0"
-        }
-        EOF
-        
-        # 2. Makefile (build instructions)
-        if [ ! -f "Makefile" ]; then
-          cat > Makefile << 'EOF'
-          # Minimal Makefile for KernelSU module
-          obj-m += hma_plus_plus.o
-          hma_plus_plus-objs := HMA++.o
-          
-          KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
-          PWD := $(shell pwd)
-          
-          all:
-          	$(MAKE) -C $(KERNEL_SRC) M=$(PWD) modules
-          
-          clean:
-          	$(MAKE) -C $(KERNEL_SRC) M=$(PWD) clean
-          EOF
-        fi
-        
-        # 3. Verify source file exists
-        if [ ! -f "HMA++.c" ]; then
-          echo "ERROR: HMA++.c not found!"
-          ls -la
-          exit 1
-        fi
-        
-    - name: Build module with KernelSU builder
-      run: |
-        echo "=== Starting build process ==="
-        echo "Current directory: $(pwd)"
-        echo "Files in root:"
-        ls -la
-        
-        # The builder is in kernelsu/tools/
-        cd kernelsu/tools
-        
-        echo "Running KernelSU builder..."
-        python3 build.py ../../ --target ${{ matrix.arch }}
-        
-        # Check output
-        echo "Build output:"
-        find ../.. -name "*.kpm" -o -name "*.ko" 2>/dev/null || true
-        
-    - name: Upload KPM artifact
-      uses: actions/upload-artifact@v4
+    - name: Build with KernelSU Action
+      uses: tiann/actions-kernelsu-module-builder@v1
       with:
-        name: HMA-plus-plus-${{ matrix.arch }}
-        path: |
-          ../*.kpm
-          *.kpm
-          ../../*.kpm
-        if-no-files-found: error
-        
-    - name: Debug on failure
-      if: failure()
-      run: |
-        echo "=== DEBUG INFORMATION ==="
-        echo "Python: $(python3 --version)"
-        echo "Clang: $(clang --version 2>/dev/null || echo 'Not found')"
-        echo "Directory tree (simplified):"
-        find . -type f \( -name "*.py" -o -name "*.c" -o -name "Makefile" \) | head -30
-        echo "KernelSU tools content:"
-        ls -la kernelsu/tools/
+        target: aarch64
