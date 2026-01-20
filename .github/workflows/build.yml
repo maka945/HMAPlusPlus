@@ -1,0 +1,52 @@
+name: Build HMA++
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [aarch64, arm, x86_64]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup environment
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential clang llvm lld libelf-dev git wget
+        
+    - name: Download KernelSU builder
+      run: |
+        wget https://github.com/tiann/KernelSU/archive/refs/tags/v0.9.4.zip
+        unzip v0.9.4.zip
+        mv KernelSU-0.9.4 kernelsu
+        
+    - name: Create module.json
+      run: |
+        cat > module.json << EOF
+        {
+          "id": "hma-plus-plus",
+          "name": "HMA++",
+          "version": "1.0.0",
+          "versionCode": 100,
+          "author": "maka945",
+          "description": "Hide My Applist",
+          "minKernelSU": "v0.7.0"
+        }
+        EOF
+        
+    - name: Build for ${{ matrix.arch }}
+      run: |
+        cd kernelsu/kernel
+        python3 build.py ../../ --target ${{ matrix.arch }}
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: HMA-plus-plus-${{ matrix.arch }}
+        path: kernelsu/kernel/out/*.kpm
