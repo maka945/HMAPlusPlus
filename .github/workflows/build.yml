@@ -1,4 +1,4 @@
-name: Build HMA++
+name: Build HMA++ Module
 
 on:
   workflow_dispatch:
@@ -7,48 +7,59 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    
     steps:
     - uses: actions/checkout@v4
     
-    - name: Setup build environment
+    - name: Install dependencies
       run: |
-        sudo apt update
-        sudo apt install -y \
+        sudo apt-get update
+        sudo apt-get install -y \
           build-essential \
-          clang llvm lld \
+          clang-14 llvm-14 lld-14 \
           libelf-dev \
           git wget unzip \
           python3 python3-pip \
           bc flex bison
         
-    - name: Clone KernelSU builder
+    - name: Get KernelSU builder
       run: |
-        git clone https://github.com/tiann/kernelsu_builder.git
-        cd kernelsu_builder
-        pip3 install -r requirements.txt 2>/dev/null || true
+        # Method 1: Direct download
+        wget -q https://codeload.github.com/tiann/kernelsu_builder/zip/refs/heads/main -O builder.zip
+        unzip -q builder.zip
+        mv kernelsu_builder-main kernelsu_builder
+        echo "Builder downloaded successfully"
         
-    - name: Create module.json
+    - name: Prepare module
       run: |
-        cat > module.json << 'EOF'
-        {
-          "id": "hma-plus-plus",
-          "name": "HMA++",
-          "version": "1.0.0",
-          "versionCode": 100,
-          "author": "maka945",
-          "description": "Hide My Applist",
-          "minKernelSU": "v0.7.0"
-        }
-        EOF
+        # Ensure module.json exists
+        if [ ! -f "module.json" ]; then
+          echo '{
+            "id": "hma-plus-plus",
+            "name": "HMA++",
+            "version": "1.0.0",
+            "author": "maka945",
+            "minKernelSU": "v0.7.0"
+          }' > module.json
+        fi
         
-    - name: Build module
+    - name: Run builder
       run: |
         cd kernelsu_builder
         python3 builder.py --module ../ --target aarch64
         
-    - name: Upload artifact
+    - name: Check results
+      run: |
+        echo "Build output:"
+        ls -la kernelsu_builder/out/ 2>/dev/null || echo "No output directory"
+        find . -name "*.kpm" -type f 2>/dev/null || echo "No KPM files found"
+        
+    - name: Upload KPM file
       uses: actions/upload-artifact@v4
       with:
-        name: HMA-plus-plus
-        path: kernelsu_builder/out/*.kpm
+        name: HMA-Module
+        path: |
+          kernelsu_builder/out/*.kpm
+          *.kpm
+        if-no-files-found: warn
