@@ -1,4 +1,4 @@
-name: Build HMA++
+name: Build HMA++ (Fixed)
 
 on:
   workflow_dispatch:
@@ -7,10 +7,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Use 22.04 for stability
     strategy:
       matrix:
-        arch: [aarch64, arm, x86_64]
+        arch: [aarch64]
+        # Start with just aarch64 for your Xiaomi 12T
     
     steps:
     - uses: actions/checkout@v4
@@ -18,17 +19,32 @@ jobs:
     - name: Setup environment
       run: |
         sudo apt update
-        sudo apt install -y build-essential clang llvm lld libelf-dev git wget
+        sudo apt install -y \
+          build-essential \
+          clang-14 llvm-14 lld-14 \
+          libelf-dev \
+          git wget unzip \
+          python3 python3-pip \
+          bc flex bison
         
-    - name: Download KernelSU builder
+    - name: Download KernelSU
       run: |
-        wget https://github.com/tiann/KernelSU/archive/refs/tags/v0.9.4.zip
-        unzip v0.9.4.zip
-        mv KernelSU-0.9.4 kernelsu
+        # Download latest stable KernelSU
+        KSU_VERSION="v0.9.4"
+        wget -q "https://github.com/tiann/KernelSU/archive/refs/tags/${KSU_VERSION}.zip"
+        unzip -q "${KSU_VERSION}.zip"
+        mv "KernelSU-${KSU_VERSION#v}" kernelsu
         
-    - name: Create module.json
+        # Check if build.py exists
+        echo "Checking KernelSU structure..."
+        find kernelsu -name "build.py" -type f
+        ls -la kernelsu/
+        
+    - name: Prepare module
       run: |
-        cat > module.json << EOF
+        # Create module.json in the repository root
+        # KernelSU builder expects this structure
+        cat > module.json << 'EOF'
         {
           "id": "hma-plus-plus",
           "name": "HMA++",
@@ -40,13 +56,71 @@ jobs:
         }
         EOF
         
+        # Create a simple Makefile if not exists
+        if [ ! -f "Makefile" ]; then
+          cat > Makefile << 'EOF'
+          obj-m += hma_plus_plus.o
+          hma_plus_plus-objs := HMA++.o
+          
+          KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
+          PWD := $(shell pwd)
+          
+          all:
+          	$(MAKE) -C $(KERNEL_SRC) M=$(PWD) modules
+          
+          clean:
+          	$(MAKE) -C $(KERNEL_SRC) M=$(PWD) clean
+          EOF
+        fi
+        
     - name: Build for ${{ matrix.arch }}
       run: |
-        cd kernelsu/kernel
-        python3 build.py ../../ --target ${{ matrix.arch }}
+        echo "Current directory: $(pwd)"
+        echo "Listing contents:"
+        ls -la
+        
+        echo "KernelSU directory structure:"
+        find kernelsu -type f -name "*.py" | head -20
+        
+        # Try different possible locations for build.py
+        if [ -f "kernelsu/kernel/build.py" ]; then
+          echo "Found build.py in kernelsu/kernel/"
+          cd kernelsu/kernel
+          python3 build.py ../../ --target ${{ matrix.arch }}
+        elif [ -f "kernelsu/builder/build.py" ]; then
+          echo "Found build.py in kernelsu/builder/"
+          cd kernelsu/builder
+          python3 build.py ../../ --target ${{ matrix.arch }}
+        elif [ -f "kernelsu/scripts/build.py" ]; then
+          echo "Found build.py in kernelsu/scripts/"
+          cd kernelsu/scripts
+          python3 build.py ../../ --target ${{ matrix.arch }}
+        elif [ -f "kernelsu/build.py" ]; then
+          echo "Found build.py in kernelsu/"
+          cd kernelsu
+          python3 build.py ../ --target ${{ matrix.arch }}
+        else
+          echo "ERROR: Could not find build.py!"
+          echo "Searching all files..."
+          find kernelsu -name "*.py" -type f
+          exit 1
+        fi
         
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: HMA-plus-plus-${{ matrix.arch }}
-        path: kernelsu/kernel/out/*.kpm
+        path: |
+          kernelsu/**/*.kpm
+          out/*.kpm
+          *.kpm
+        if-no-files-found: error
+        
+    - name: Debug information
+      if: always()
+      run: |
+        echo "=== Build Debug Info ==="
+        echo "Python version: $(python3 --version)"
+        echo "Clang version: $(clang-14 --version 2>/dev/null || echo 'Not found')"
+        echo "Current tree:"
+        find . -name "*.ko" -o -name "*.kpm" -o -name "build.py" 2>/dev/null
